@@ -1,12 +1,12 @@
-# Architecture Overview
+# Backend Architecture Overview
 
 ## System Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │                 │    │                  │    │                 │
-│   Frontend      │◄──►│   LiveKit        │◄──►│   Backend       │
-│   (Next.js)     │    │   Server         │    │   (Python)      │
+│   Client Apps   │◄──►│   LiveKit        │◄──►│   Backend       │
+│   (Any SDK)     │    │   Server         │    │   (Python)      │
 │                 │    │                  │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
          │                        │                        │
@@ -14,24 +14,17 @@
          ▼                        ▼                        ▼
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │                 │    │                  │    │                 │
-│ - React UI      │    │ - WebRTC SFU     │    │ - AI Agent      │
-│ - Voice I/O     │    │ - Room Mgmt      │    │ - OpenAI LLM    │
-│ - Transcription │    │ - Media Routing  │    │ - Deepgram STT  │
-│ - Visualizer    │    │ - Authentication │    │ - Function Tools│
+│ - Voice I/O     │    │ - WebRTC SFU     │    │ - AI Agent      │
+│ - Transcription │    │ - Room Mgmt      │    │ - OpenAI LLM    │
+│ - Audio Stream  │    │ - Media Routing  │    │ - Deepgram STT  │
+│ - Client SDKs   │    │ - Authentication │    │ - Function Tools│
 │                 │    │                  │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
-## Component Breakdown
+## Backend Component Breakdown
 
-### Frontend Components
-- **App Router (Next.js 14)**: Main application routing and page management
-- **Voice Assistant UI**: Real-time voice interaction interface
-- **Transcription View**: Live conversation display
-- **Audio Visualizer**: Visual feedback for audio activity
-- **Connection Manager**: LiveKit room connection handling
-
-### Backend Components
+### Core Agent Components
 - **Agent Session**: Main orchestrator for voice AI interactions
 - **LLM Pipeline**: OpenAI integration for natural language processing
 - **STT Pipeline**: Deepgram integration for speech recognition
@@ -43,11 +36,17 @@
 - **WebRTC SFU**: Selective Forwarding Unit for real-time media
 - **Room Management**: Session and participant handling
 - **Authentication**: JWT token-based access control
-- **Media Routing**: Audio/video stream distribution
+- **Media Routing**: Audio stream distribution
+
+### Supporting Services
+- **Metrics Collection**: Usage tracking and performance monitoring
+- **Error Handling**: Comprehensive error management
+- **Logging**: Structured logging for debugging and monitoring
+- **RAG System**: LlamaIndex integration for knowledge queries
 
 ## Data Flow
 
-1. **User Speech** → Frontend captures audio
+1. **User Speech** → Client captures audio
 2. **Audio Stream** → Sent to LiveKit server
 3. **Media Routing** → LiveKit forwards to Python agent
 4. **Speech-to-Text** → Deepgram processes audio
@@ -55,12 +54,19 @@
 6. **Function Calling** → Tools executed if needed
 7. **Text-to-Speech** → OpenAI synthesizes audio
 8. **Audio Response** → Sent back through LiveKit
-9. **Frontend Playback** → User hears agent response
+9. **Client Playback** → User hears agent response
 
 ## Security Architecture
 
 - **JWT Authentication**: Token-based access control
 - **API Key Management**: Secure credential handling
 - **HTTPS/WSS**: Encrypted connections
-- **CORS Configuration**: Cross-origin request protection
 - **Environment Variables**: Sensitive data isolation
+- **Rate Limiting**: API abuse prevention
+
+## Scalability Considerations
+
+- **Horizontal Scaling**: Multiple agent instances
+- **Load Balancing**: Distribution across instances
+- **Session Management**: Stateless agent design
+- **Resource Monitoring**: CPU, memory, and API usage tracking

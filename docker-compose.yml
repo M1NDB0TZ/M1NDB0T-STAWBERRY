@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  mindbot-app:
+    build:
+      context: ./backend/production-agent
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    env_file:
+      - ./backend/production-agent/.env
+    volumes:
+      - ./backend/production-agent:/app
+    command: python main.py
+    depends_on:
+      - db
+
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: mindbot_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  db_data:

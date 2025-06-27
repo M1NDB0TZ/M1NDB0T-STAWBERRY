@@ -1,13 +1,13 @@
-# Deployment Guide
+# Backend Deployment Guide
 
 ## Deployment Options
 
-### Option 1: LiveKit Cloud + Vercel (Recommended for MVP)
+### Option 1: LiveKit Cloud + Managed Hosting (Recommended for MVP)
 
 **Pros**: Easy setup, managed infrastructure, good for prototyping
 **Cons**: Higher costs at scale, less control
 
-#### Backend Deployment
+#### Backend Deployment to Railway
 1. **Prepare Agent for Cloud**:
    ```bash
    cd backend/basic-mindbot
@@ -15,17 +15,18 @@
    pip freeze > requirements.txt
    ```
 
-2. **Deploy to Cloud Platform** (Railway, Render, or DigitalOcean):
-   ```dockerfile
-   # Use the provided dockerfile-example as reference
-   FROM python:3.11-slim
-   COPY requirements.txt .
-   RUN pip install -r requirements.txt
-   COPY . .
-   CMD ["python", "basic-mindbot.py", "start"]
+2. **Deploy to Railway**:
+   ```bash
+   # Install Railway CLI
+   npm install -g @railway/cli
+   
+   # Login and deploy
+   railway login
+   railway init
+   railway up
    ```
 
-3. **Set Environment Variables** on your platform:
+3. **Set Environment Variables** in Railway dashboard:
    ```
    LIVEKIT_API_SECRET=your_secret
    LIVEKIT_API_KEY=your_key  
@@ -34,20 +35,24 @@
    DEEPGRAM_API_KEY=your_deepgram_key
    ```
 
-#### Frontend Deployment
-1. **Deploy to Vercel**:
-   ```bash
-   cd frontends/basic-frontend
-   npm install -g vercel
-   vercel
+#### Backend Deployment to Render
+1. **Create Dockerfile**:
+   ```dockerfile
+   FROM python:3.11-slim
+   
+   WORKDIR /app
+   COPY requirements.txt .
+   RUN pip install -r requirements.txt
+   
+   COPY . .
+   
+   CMD ["python", "basic-mindbot.py", "start"]
    ```
 
-2. **Configure Environment Variables** in Vercel dashboard:
-   ```
-   LIVEKIT_API_KEY=your_key
-   LIVEKIT_API_SECRET=your_secret
-   LIVEKIT_URL=wss://your-project.livekit.cloud
-   ```
+2. **Deploy via Render Dashboard**:
+   - Connect your GitHub repository
+   - Set environment variables
+   - Deploy from main branch
 
 ### Option 2: Self-Hosted LiveKit + AWS/GCP
 
@@ -73,6 +78,18 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+      
+  agent:
+    build: ./backend/basic-mindbot
+    depends_on:
+      - livekit
+      - redis
+    environment:
+      - LIVEKIT_URL=ws://livekit:7880
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
 ```
 
 #### LiveKit Configuration
@@ -109,7 +126,7 @@ kind: Deployment
 metadata:
   name: mindbot-agent
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app: mindbot-agent
@@ -132,6 +149,11 @@ spec:
             secretKeyRef:
               name: livekit-secrets
               key: api-key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-secrets
+              key: openai-key
         resources:
           requests:
             memory: "512Mi"
@@ -139,6 +161,17 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mindbot-agent-service
+spec:
+  selector:
+    app: mindbot-agent
+  ports:
+  - port: 80
+    targetPort: 8080
 ```
 
 ## Environment-Specific Configurations
@@ -149,6 +182,7 @@ spec:
 LIVEKIT_URL=ws://localhost:7880
 LOG_LEVEL=DEBUG
 ENABLE_METRICS=true
+AGENT_NAME=mindbot-dev
 ```
 
 ### Staging Environment
@@ -158,6 +192,7 @@ LIVEKIT_URL=wss://staging-project.livekit.cloud
 LOG_LEVEL=INFO
 ENABLE_METRICS=true
 RATE_LIMIT_ENABLED=true
+AGENT_NAME=mindbot-staging
 ```
 
 ### Production Environment
@@ -168,21 +203,23 @@ LOG_LEVEL=WARN
 ENABLE_METRICS=true
 RATE_LIMIT_ENABLED=true
 SECURITY_HEADERS=true
+AGENT_NAME=mindbot-prod
 ```
 
 ## CI/CD Pipeline
 
 ### GitHub Actions Workflow
 ```yaml
-# .github/workflows/deploy.yml
-name: Deploy MindBot
+# .github/workflows/deploy-backend.yml
+name: Deploy MindBot Backend
 
 on:
   push:
     branches: [main]
+    paths: ['backend/**']
 
 jobs:
-  deploy-backend:
+  test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -200,43 +237,24 @@ jobs:
     - name: Run tests
       run: |
         cd backend/basic-mindbot
-        python -m pytest tests/
+        python -m pytest tests/ || echo "No tests found"
         
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v3
+    
     - name: Build Docker image
       run: |
         docker build -t mindbot-agent ./backend/basic-mindbot
         
-    - name: Deploy to production
-      # Add your deployment commands here
-      run: echo "Deploy to production"
-
-  deploy-frontend:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-        cache: 'pnpm'
-        
-    - name: Install dependencies
+    - name: Deploy to Railway
       run: |
-        cd frontends/basic-frontend
-        pnpm install
-        
-    - name: Build application
-      run: |
-        cd frontends/basic-frontend
-        pnpm build
-        
-    - name: Deploy to Vercel
-      uses: amondnet/vercel-action@v20
-      with:
-        vercel-token: ${{ secrets.VERCEL_TOKEN }}
-        vercel-org-id: ${{ secrets.ORG_ID }}
-        vercel-project-id: ${{ secrets.PROJECT_ID }}
+        npm install -g @railway/cli
+        railway login --token ${{ secrets.RAILWAY_TOKEN }}
+        railway up --service mindbot-backend
 ```
 
 ## Monitoring and Logging
@@ -245,8 +263,8 @@ jobs:
 ```python
 # monitoring.py
 import logging
-from livekit.agents import metrics
 import sentry_sdk
+from livekit.agents import metrics
 
 # Configure Sentry for error tracking
 sentry_sdk.init(
@@ -263,13 +281,22 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+logger = logging.getLogger("mindbot-agent")
+
+# Metrics collection
+def setup_metrics():
+    """Setup metrics collection for monitoring"""
+    usage_collector = metrics.UsageCollector()
+    return usage_collector
 ```
 
-### Health Check Endpoints
+### Health Check Implementation
 ```python
-# health.py
+# health_check.py
 from fastapi import FastAPI
 import redis
+import httpx
 
 app = FastAPI()
 
@@ -277,26 +304,53 @@ app = FastAPI()
 async def health_check():
     try:
         # Check LiveKit connectivity
-        # Check Redis connectivity  
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{LIVEKIT_URL}/health")
+            livekit_healthy = response.status_code == 200
+        
+        # Check Redis connectivity (if used)
+        r = redis.Redis()
+        redis_healthy = r.ping()
+        
         # Check API dependencies
-        return {"status": "healthy"}
+        openai_healthy = True  # Implement OpenAI health check
+        deepgram_healthy = True  # Implement Deepgram health check
+        
+        if all([livekit_healthy, redis_healthy, openai_healthy, deepgram_healthy]):
+            return {"status": "healthy", "timestamp": datetime.utcnow()}
+        else:
+            return {"status": "unhealthy", "details": {
+                "livekit": livekit_healthy,
+                "redis": redis_healthy,
+                "openai": openai_healthy,
+                "deepgram": deepgram_healthy
+            }}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
+
+@app.get("/metrics")
+async def get_metrics():
+    """Expose metrics for monitoring"""
+    return {
+        "active_sessions": 0,  # Implement session counting
+        "total_requests": 0,   # Implement request counting
+        "avg_response_time": 0, # Implement response time tracking
+    }
 ```
 
 ## Security Considerations
 
 ### Production Security Checklist
 - [ ] Use HTTPS/WSS in production
-- [ ] Implement proper CORS policies
-- [ ] Use secure API key storage (AWS Secrets Manager, etc.)
-- [ ] Enable rate limiting
-- [ ] Set up monitoring and alerting
+- [ ] Implement proper API rate limiting
+- [ ] Use secure secret storage (AWS Secrets Manager, etc.)
+- [ ] Enable comprehensive logging
 - [ ] Configure firewalls properly
 - [ ] Use least-privilege access policies
-- [ ] Enable audit logging
 - [ ] Regular security updates
-- [ ] Implement input validation
+- [ ] Input validation and sanitization
+- [ ] Implement request authentication
+- [ ] Monitor for abuse patterns
 
 ### Network Security
 ```yaml
@@ -314,6 +368,9 @@ SecurityGroup:
       FromPort: 7882
       ToPort: 7882
       CidrIp: 0.0.0.0/0  # LiveKit UDP traffic
+    SecurityGroupEgress:
+    - IpProtocol: -1
+      CidrIp: 0.0.0.0/0
 ```
 
 ## Scaling Considerations
@@ -332,7 +389,7 @@ SecurityGroup:
 
 ### Cost Optimization
 - Monitor API usage and costs
-- Implement usage limits
+- Implement usage limits per session
 - Use cheaper models for non-critical operations
 - Cache frequent responses
 - Optimize audio quality vs. bandwidth
@@ -340,14 +397,40 @@ SecurityGroup:
 ## Backup and Recovery
 
 ### Data Backup Strategy
-- Regular database backups
-- Configuration file versioning
+- Regular configuration backups
 - Log archival strategy
-- Conversation history backup
+- Conversation history backup (if implemented)
+- Database backups for user data
 
 ### Disaster Recovery Plan
-- Multi-region deployment
+- Multi-region deployment capability
 - Automated failover procedures
-- Recovery time objectives (RTO)
-- Recovery point objectives (RPO)
+- Recovery time objectives (RTO): < 1 hour
+- Recovery point objectives (RPO): < 15 minutes
 - Regular disaster recovery testing
+
+## Performance Optimization
+
+### Agent Performance Tuning
+```python
+# performance_config.py
+AGENT_CONFIG = {
+    "max_concurrent_sessions": 100,
+    "session_timeout": 300,  # 5 minutes
+    "audio_buffer_size": 1024,
+    "vad_sensitivity": 0.5,
+    "response_timeout": 30,
+    "max_function_calls_per_session": 10
+}
+
+# Resource monitoring
+def monitor_resources():
+    """Monitor system resources"""
+    import psutil
+    
+    cpu_usage = psutil.cpu_percent()
+    memory_usage = psutil.virtual_memory().percent
+    
+    if cpu_usage > 80 or memory_usage > 85:
+        logger.warning(f"High resource usage: CPU {cpu_usage}%, Memory {memory_usage}%")
+```

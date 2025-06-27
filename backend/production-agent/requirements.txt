@@ -1,0 +1,34 @@
+# MindBot Production Agent with Supabase Integration
+livekit-agents[voice]>=1.0.0
+livekit-plugins-silero>=0.6.0
+livekit-plugins-deepgram>=0.8.0
+livekit-plugins-openai>=0.7.0
+livekit-plugins-turn-detector>=0.1.0
+
+# Supabase integration
+supabase>=2.3.0
+postgrest>=0.16.0
+realtime>=2.0.0
+
+# Payment processing
+stripe>=7.0.0
+
+# Async HTTP and utilities
+aiohttp>=3.9.0
+asyncpg>=0.29.0
+uvicorn>=0.20.0
+fastapi>=0.100.0
+
+# Validation and security
+pydantic>=2.5.0
+PyJWT>=2.8.0
+bcrypt>=4.0.0
+
+# Monitoring and logging
+structlog>=23.2.0
+prometheus-client>=0.19.0
+
+# Development and testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
