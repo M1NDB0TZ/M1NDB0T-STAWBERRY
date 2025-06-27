@@ -1,11 +1,10 @@
-# Development Setup Guide
+# Backend Development Setup Guide
 
 ## Prerequisites
 
 - Python 3.11+
-- Node.js 18+
-- pnpm (recommended) or npm
 - Git
+- Virtual environment support
 
 ## Required API Keys
 
@@ -61,57 +60,48 @@ DEEPGRAM_API_KEY="your_deepgram_api_key"
 python basic-mindbot.py start
 ```
 
-## Frontend Setup
+## Testing the Backend
 
-### 1. Navigate to Frontend Directory
+### 1. Start the Python Agent
 ```bash
-cd frontends/basic-frontend
+cd backend/basic-mindbot
+python basic-mindbot.py start
 ```
 
-### 2. Install Dependencies
+### 2. Test with LiveKit CLI
 ```bash
-pnpm install
+# Install LiveKit CLI
+pip install livekit-cli
+
+# Test room creation
+lk room create test-room --url $LIVEKIT_URL --api-key $LIVEKIT_API_KEY --api-secret $LIVEKIT_API_SECRET
 ```
 
-### 3. Configure Environment Variables
+### 3. Monitor Agent Logs
+The agent will output detailed logs showing:
+- Connection status
+- Audio processing
+- LLM interactions
+- Function calls
+- Error messages
+
+## Alternative RAG Backend Setup
+
+### 1. Navigate to RAG Backend
 ```bash
-cp .env.example .env.local
+cd backend/llamaIndex-mindbot
 ```
 
-Edit `.env.local` with your LiveKit credentials:
-```env
-LIVEKIT_API_KEY=your_livekit_api_key
-LIVEKIT_API_SECRET=your_livekit_api_secret
-LIVEKIT_URL=wss://your-project.livekit.cloud
-```
-
-### 4. Start Development Server
+### 2. Add Documents
 ```bash
-pnpm dev
+mkdir -p data
+# Add your documents to the data/ directory
 ```
 
-### 5. Open Application
-Navigate to `http://localhost:3000` in your browser.
-
-## Testing the Complete Setup
-
-1. **Start the Python Agent**:
-   ```bash
-   cd backend/basic-mindbot
-   python basic-mindbot.py start
-   ```
-
-2. **Start the Frontend** (in new terminal):
-   ```bash
-   cd frontends/basic-frontend
-   pnpm dev
-   ```
-
-3. **Test Connection**:
-   - Open `http://localhost:3000`
-   - Click "Start a conversation"
-   - Grant microphone permissions
-   - Speak to test the voice interaction
+### 3. Run RAG Agent
+```bash
+python quary_engine_mindbot.py start
+```
 
 ## Common Issues & Solutions
 
@@ -120,10 +110,10 @@ Navigate to `http://localhost:3000` in your browser.
 - Check that the LiveKit server URL is accessible
 - Ensure API keys have proper permissions
 
-### Audio Issues
-- Check browser microphone permissions
-- Test with different browsers (Chrome recommended)
-- Verify system audio input/output devices
+### Audio Processing Issues
+- Check system audio permissions
+- Verify VAD sensitivity settings
+- Monitor API usage in provider dashboards
 
 ### Network Issues
 - Check firewall settings for WebRTC traffic
@@ -132,7 +122,15 @@ Navigate to `http://localhost:3000` in your browser.
 
 ## Development Tips
 
-- Use browser developer tools to monitor WebRTC connections
-- Check Python agent logs for detailed error information
-- Monitor API usage in provider dashboards
-- Test with different audio input devices and quality settings
+- Monitor Python agent logs for detailed error information
+- Check API usage in provider dashboards
+- Test with different audio input scenarios
+- Use structured logging for better debugging
+
+## Production Deployment
+
+For production deployment, see `07-deployment-guide.md` for detailed instructions on:
+- Docker containerization
+- Cloud platform deployment
+- Environment configuration
+- Monitoring setup
