@@ -155,6 +155,7 @@ class AgentConfig(BaseConfig):
     agent_name: str = Field(default="MindBot", env="AGENT_NAME")
     max_concurrent_sessions: int = Field(default=100, env="MAX_CONCURRENT_SESSIONS")
     session_timeout_minutes: int = Field(default=30, env="SESSION_TIMEOUT_MINUTES")
+    debug_mode: bool = Field(default=False, env="DEBUG_MODE")
     
     # Voice processing
     vad_sensitivity: float = Field(default=0.5, env="VAD_SENSITIVITY")
@@ -176,6 +177,125 @@ class AgentConfig(BaseConfig):
     # Function calling
     max_function_calls_per_session: int = Field(default=10, env="MAX_FUNCTION_CALLS_PER_SESSION")
     function_timeout_seconds: int = Field(default=15, env="FUNCTION_TIMEOUT_SECONDS")
+
+    # Monetization
+    subscription_plans: Dict[str, Any] = {
+        "premium_monthly": {
+            "name": "Premium Monthly",
+            "price_id": "price_1234567890",
+            "amount": 1999,
+            "currency": "usd",
+            "interval": "month",
+            "features": [
+                "Access to all personas",
+                "Ad-free experience",
+                "Premium voice quality",
+                "Create up to 3 custom personas",
+                "Priority support"
+            ]
+        },
+        "premium_yearly": {
+            "name": "Premium Yearly",
+            "price_id": "price_0987654321",
+            "amount": 19999,
+            "currency": "usd",
+            "interval": "year",
+            "features": [
+                "Access to all personas",
+                "Ad-free experience",
+                "Premium voice quality",
+                "Create up to 3 custom personas",
+                "Priority support",
+                "2 months free compared to monthly"
+            ]
+        },
+        "exclusive_monthly": {
+            "name": "Exclusive Monthly",
+            "price_id": "price_2468101214",
+            "amount": 4999,
+            "currency": "usd",
+            "interval": "month",
+            "features": [
+                "Access to all personas including exclusive ones",
+                "Ad-free experience",
+                "Highest voice quality",
+                "Unlimited custom personas",
+                "Priority support with dedicated account manager",
+                "Advanced analytics and insights"
+            ]
+        }
+    }
+    time_card_packages: Dict[str, Any] = {
+        "starter_1h": {
+            "name": "Starter Pack",
+            "hours": 1,
+            "price_cents": 999,
+            "bonus_minutes": 0,
+            "description": "Perfect for trying out MindBot - 1 hour of AI conversation time"
+        },
+        "basic_5h": {
+            "name": "Basic Pack",
+            "hours": 5,
+            "price_cents": 4499,
+            "bonus_minutes": 30,
+            "description": "Great for regular users - 5 hours + 30 bonus minutes"
+        },
+        "premium_10h": {
+            "name": "Premium Pack",
+            "hours": 10,
+            "price_cents": 7999,
+            "bonus_minutes": 120,
+            "description": "Best value - 10 hours + 2 bonus hours"
+        },
+        "pro_25h": {
+            "name": "Pro Pack",
+            "hours": 25,
+            "price_cents": 17999,
+            "bonus_minutes": 300,
+            "description": "For power users - 25 hours + 5 bonus hours"
+        },
+        "enterprise_50h": {
+            "name": "Enterprise Pack",
+            "hours": 50,
+            "price_cents": 29999,
+            "bonus_minutes": 600,
+            "description": "Maximum value - 50 hours + 10 bonus hours"
+        }
+    }
+    coupon_codes: Dict[str, Any] = {
+        "WELCOME25": {"percent_off": 25, "valid_until": "2025-12-31", "description": "25% off for new users"},
+        "SUMMER2025": {"percent_off": 15, "valid_until": "2025-09-01", "description": "15% off summer special"},
+        "BULK50": {"percent_off": 10, "valid_until": "2025-12-31", "description": "10% off bulk purchase", "min_amount": 5000}
+    }
+    ad_config: Dict[str, Any] = {
+        "ad_types": {
+            "banner": {
+                "display_time": 10,
+                "revenue_per_view": 0.01,
+                "revenue_per_click": 0.05
+            },
+            "video": {
+                "display_time": 15,
+                "revenue_per_view": 0.05,
+                "revenue_per_completion": 0.15
+            },
+            "sponsored_message": {
+                "display_time": 5,
+                "revenue_per_view": 0.02,
+                "revenue_per_interaction": 0.10
+            }
+        },
+        "reward_options": {
+            "watch_ad_for_time": {
+                "ad_length": 30,
+                "time_reward": 5
+            },
+            "watch_ad_for_discount": {
+                "ad_length": 15,
+                "discount_percent": 50
+            }
+        }
+    }
     
     @validator('vad_sensitivity')
     def validate_vad_sensitivity(cls, v):

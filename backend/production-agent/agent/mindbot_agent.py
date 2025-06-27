@@ -25,8 +25,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 # Import our custom modules
 from ..services.supabase_client import supabase_client, User, VoiceSession
-from ..services.stripe_manager import stripe_manager
-from core.settings import AgentConfig, get_config
+from ..core.settings import AgentConfig, get_config
 
 # Configure logging
 logger = logging.getLogger("mindbot.production")
@@ -37,8 +36,7 @@ class ProductionMindBotAgent(Agent):
     Production MindBot Agent with time tracking, payment integration, and user context
     Follows the Mem0 pattern for session management and external service integration
     """
-    
-    def __init__(self, config: AgentConfig):
+    def __init__(self):
         super().__init__(
             instructions="""
             You are MindBot, a professional AI voice assistant that helps users with various tasks.
@@ -67,11 +65,9 @@ class ProductionMindBotAgent(Agent):
         self.session_start_time: Optional[float] = None
         self.voice_session: Optional[VoiceSession] = None
         self.user: Optional[User] = None
-        self.config = config # Store the config
-        
-        # Configuration
-        self.low_balance_threshold = self.config.low_balance_threshold_minutes
-        self.max_session_minutes = self.config.session_timeout_minutes
+        config = get_config('agent')
+        self.low_balance_threshold = config.low_balance_threshold_minutes
+        self.max_session_minutes = config.session_timeout_minutes
     
     async def on_enter(self):
         """Called when agent enters the session"""
@@ -440,6 +436,22 @@ User Context:
             logger.error(f"Error generating session summary: {e}")
             return "I'm having trouble generating your session summary right now."
 
+    @function_tool
+    async def get_agent_state(self, context: RunContext) -> str:
+        """Get a snapshot of the agent's current state (for debugging)."""
+        if not self.config.debug_mode:
+            return "Debug mode is not enabled."
+
+        state = {
+            "user_context": self.user_context,
+            "session_info": self.session_info,
+            "session_start_time": self.session_start_time,
+            "voice_session": self.voice_session.dict() if self.voice_session else None,
+            "user": self.user.dict() if self.user else None,
+            "config": self.config.dict(),
+        }
+        return str(state)
+
 
 def prewarm_process(proc):
     """Preload components to speed up session start"""
@@ -461,10 +473,11 @@ async def entrypoint(ctx: JobContext):
     """
     
     try:
+        config = get_config('agent')
         # Add context fields to logs
         ctx.log_context_fields = {
             "room": ctx.room.name,
-            "environment": os.getenv("ENVIRONMENT", "unknown"),
+            "environment": config.environment,
         }
         
         logger.info(f"Starting production MindBot session for room: {ctx.room.name}")
@@ -475,18 +488,18 @@ async def entrypoint(ctx: JobContext):
         # Create agent session with production configuration
         session = AgentSession(
             stt=deepgram.STT(
-                model=os.getenv("STT_MODEL", "nova-3"),
-                language=os.getenv("STT_LANGUAGE", "multi"),
+                model=config.stt_model,
+                language=config.stt_language,
                 smart_format=True,
                 punctuate=True
             ),
             llm=openai.LLM(
-                model=os.getenv("LLM_MODEL", "gpt-4.1-mini"),
-                temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
-                max_tokens=int(os.getenv("LLM_MAX_TOKENS", "150"))
+                model=config.llm_model,
+                temperature=config.llm_temperature,
+                max_tokens=config.llm_max_tokens
             ),
             tts=openai.TTS(
-                voice=os.getenv("TTS_VOICE", "fable")
+                voice=config.tts_voice
             ),
             vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
             turn_detection=MultilingualModel(),

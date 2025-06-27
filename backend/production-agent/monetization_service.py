@@ -84,130 +84,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     """Get current authenticated user"""
     return await verify_jwt_token(credentials)
 
-# Subscription plans
-SUBSCRIPTION_PLANS = {
-    "premium_monthly": {
-        "name": "Premium Monthly",
-        "price_id": "price_1234567890",  # Replace with actual Stripe price ID
-        "amount": 1999,  # $19.99
-        "currency": "usd",
-        "interval": "month",
-        "features": [
-            "Access to all personas",
-            "Ad-free experience",
-            "Premium voice quality",
-            "Create up to 3 custom personas",
-            "Priority support"
-        ]
-    },
-    "premium_yearly": {
-        "name": "Premium Yearly",
-        "price_id": "price_0987654321",  # Replace with actual Stripe price ID
-        "amount": 19999,  # $199.99
-        "currency": "usd",
-        "interval": "year",
-        "features": [
-            "Access to all personas",
-            "Ad-free experience",
-            "Premium voice quality",
-            "Create up to 3 custom personas",
-            "Priority support",
-            "2 months free compared to monthly"
-        ]
-    },
-    "exclusive_monthly": {
-        "name": "Exclusive Monthly",
-        "price_id": "price_2468101214",  # Replace with actual Stripe price ID
-        "amount": 4999,  # $49.99
-        "currency": "usd",
-        "interval": "month",
-        "features": [
-            "Access to all personas including exclusive ones",
-            "Ad-free experience",
-            "Highest voice quality",
-            "Unlimited custom personas",
-            "Priority support with dedicated account manager",
-            "Advanced analytics and insights"
-        ]
-    }
-}
+from core.settings import get_config
 
-# Time card packages
-TIME_CARD_PACKAGES = {
-    "starter_1h": {
-        "name": "Starter Pack",
-        "hours": 1,
-        "price_cents": 999,  # $9.99
-        "bonus_minutes": 0,
-        "description": "Perfect for trying out MindBot - 1 hour of AI conversation time"
-    },
-    "basic_5h": {
-        "name": "Basic Pack",
-        "hours": 5,
-        "price_cents": 4499,  # $44.99
-        "bonus_minutes": 30,
-        "description": "Great for regular users - 5 hours + 30 bonus minutes"
-    },
-    "premium_10h": {
-        "name": "Premium Pack",
-        "hours": 10,
-        "price_cents": 7999,  # $79.99
-        "bonus_minutes": 120,
-        "description": "Best value - 10 hours + 2 bonus hours"
-    },
-    "pro_25h": {
-        "name": "Pro Pack",
-        "hours": 25,
-        "price_cents": 17999,  # $179.99
-        "bonus_minutes": 300,
-        "description": "For power users - 25 hours + 5 bonus hours"
-    },
-    "enterprise_50h": {
-        "name": "Enterprise Pack",
-        "hours": 50,
-        "price_cents": 29999,  # $299.99
-        "bonus_minutes": 600,
-        "description": "Maximum value - 50 hours + 10 bonus hours"
-    }
-}
-
-# Coupon codes
-COUPON_CODES = {
-    "WELCOME25": {"percent_off": 25, "valid_until": "2025-12-31", "description": "25% off for new users"},
-    "SUMMER2025": {"percent_off": 15, "valid_until": "2025-09-01", "description": "15% off summer special"},
-    "BULK50": {"percent_off": 10, "valid_until": "2025-12-31", "description": "10% off bulk purchase", "min_amount": 5000}
-}
-
-# Ad configuration
-AD_CONFIG = {
-    "ad_types": {
-        "banner": {
-            "display_time": 10,  # seconds
-            "revenue_per_view": 0.01,
-            "revenue_per_click": 0.05
-        },
-        "video": {
-            "display_time": 15,  # seconds
-            "revenue_per_view": 0.05,
-            "revenue_per_completion": 0.15
-        },
-        "sponsored_message": {
-            "display_time": 5,  # seconds
-            "revenue_per_view": 0.02,
-            "revenue_per_interaction": 0.10
-        }
-    },
-    "reward_options": {
-        "watch_ad_for_time": {
-            "ad_length": 30,  # seconds
-            "time_reward": 5  # minutes
-        },
-        "watch_ad_for_discount": {
-            "ad_length": 15,  # seconds
-            "discount_percent": 50  # 50% off next session
-        }
-    }
-}
+config = get_config('agent')
+SUBSCRIPTION_PLANS = config.subscription_plans
+TIME_CARD_PACKAGES = config.time_card_packages
+COUPON_CODES = config.coupon_codes
+AD_CONFIG = config.ad_config
 
 # API Endpoints
 

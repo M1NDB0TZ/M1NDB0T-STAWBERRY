@@ -44,52 +44,7 @@ except ImportError:
     supabase_client = MockSupabaseClient()
 
 # Import or create mock persona manager
-try:
-    from persona_manager import PersonaManager
-except ImportError:
-    # Create mock for testing
-    class MockPersonaConfig:
-        def __init__(self, slug, name, summary, system_prompt):
-            self.slug = slug
-            self.name = name
-            self.summary = summary
-            self.system_prompt = system_prompt
-            self.voice = {"tts": "alloy", "style": "neutral"}
-            self.tools = ["check_time_balance"]
-            self.age_restriction = None
-            self.base_cost_multiplier = 1.0
-            self.session_time_limit = None
-            self.daily_usage_limit = None
-            self.ad_supported = False
-            self.premium_features = []
-    
-    class MockPersonaManager:
-        def __init__(self, supabase_client):
-            self.presets = {
-                "mindbot": MockPersonaConfig(
-                    "mindbot", 
-                    "MindBot", 
-                    "General assistant",
-                    "You are MindBot, a helpful AI assistant."
-                ),
-                "blaze": MockPersonaConfig(
-                    "blaze", 
-                    "Blaze", 
-                    "Cannabis guru",
-                    "You are Blaze, a laid-back cannabis guru."
-                ),
-                "sizzle": MockPersonaConfig(
-                    "sizzle", 
-                    "SizzleBot", 
-                    "DJ hype-man",
-                    "You are SizzleBot, an energetic DJ hype-man."
-                )
-            }
-        
-        async def get_persona_by_slug(self, slug):
-            return self.presets.get(slug)
-    
-    PersonaManager = MockPersonaManager
+from .services.persona_manager import persona_manager
 
 logger = logging.getLogger("mindbot.persona-agent")
 
@@ -98,8 +53,7 @@ class PersonaVoiceAgent(Agent):
     
     def __init__(self, persona_slug: str = "mindbot"):
         # Load persona configuration
-        self.persona_manager = PersonaManager(supabase_client)
-        self.persona = None
+        self.persona = persona_manager.get_persona(persona_slug)
         self.persona_slug = persona_slug
         self.user_context = {}
         self.session_info = {}
@@ -113,9 +67,6 @@ class PersonaVoiceAgent(Agent):
     async def on_enter(self):
         """Called when agent enters the session"""
         try:
-            # Load persona configuration
-            await self._load_persona()
-            
             # Load user context
             await self._load_user_context()
             
@@ -141,21 +92,7 @@ class PersonaVoiceAgent(Agent):
                 allow_interruptions=True
             )
     
-    async def _load_persona(self):
-        """Load the specific persona configuration"""
-        try:
-            self.persona = await self.persona_manager.get_persona_by_slug(self.persona_slug)
-            
-            if not self.persona:
-                logger.error(f"Persona {self.persona_slug} not found, falling back to default")
-                self.persona = await self.persona_manager.get_persona_by_slug("mindbot")
-                self.persona_slug = "mindbot"
-            
-            logger.info(f"Loaded persona: {self.persona.name}")
-            
-        except Exception as e:
-            logger.error(f"Error loading persona {self.persona_slug}: {e}")
-            self.persona = None
+    
     
     async def _load_user_context(self):
         """Load user context from LiveKit participant"""
@@ -270,20 +207,20 @@ class PersonaVoiceAgent(Agent):
         """Switch to a different persona (if available)"""
         try:
             # Get available personas for user
-            personas = await self.persona_manager.get_available_personas("premium")  # Assume premium for now
+            personas = persona_manager.get_all_personas()
             
             # Find matching persona
             matching_persona = None
             for p in personas:
-                if p["name"].lower() == persona_name.lower() or p["slug"] == persona_name.lower():
+                if p.name.lower() == persona_name.lower() or p.slug == persona_name.lower():
                     matching_persona = p
                     break
             
             if not matching_persona:
-                available_names = [p["name"] for p in personas]
+                available_names = [p.name for p in personas]
                 return f"I couldn't find a persona named '{persona_name}'. Available personas: {', '.join(available_names)}"
             
-            return f"To switch to {matching_persona['name']}, you'll need to start a new session. Would you like me to help you set that up?"
+            return f"To switch to {matching_persona.name}, you'll need to start a new session. Would you like me to help you set that up?"
             
         except Exception as e:
             logger.error(f"Error switching persona: {e}")
