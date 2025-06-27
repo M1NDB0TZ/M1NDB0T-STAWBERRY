@@ -4,8 +4,11 @@ Enhanced voice agent that can dynamically load different personas
 
 import logging
 import asyncio
-from typing import Optional, Dict, Any
+import os
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 
+from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -20,8 +23,73 @@ from livekit.agents.voice import MetricsCollectedEvent
 from livekit.plugins import deepgram, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from supabase_client import supabase_client
-from persona_manager import PersonaManager
+# Load environment variables
+load_dotenv()
+
+# Try to import supabase client, use mock if not available
+try:
+    from supabase_client import supabase_client
+except ImportError:
+    # Create mock for testing
+    class MockSupabaseClient:
+        async def get_user_by_id(self, user_id):
+            return type('User', (), {'id': user_id, 'email': 'test@example.com', 'full_name': 'Test User'})
+        
+        async def get_user_time_balance(self, user_id):
+            return {"total_minutes": 60, "total_hours": 1.0, "active_cards": 1}
+        
+        async def start_voice_session(self, user_id, session_id, room_name, agent_type):
+            return type('Session', (), {'session_id': session_id})
+    
+    supabase_client = MockSupabaseClient()
+
+# Import or create mock persona manager
+try:
+    from persona_manager import PersonaManager
+except ImportError:
+    # Create mock for testing
+    class MockPersonaConfig:
+        def __init__(self, slug, name, summary, system_prompt):
+            self.slug = slug
+            self.name = name
+            self.summary = summary
+            self.system_prompt = system_prompt
+            self.voice = {"tts": "alloy", "style": "neutral"}
+            self.tools = ["check_time_balance"]
+            self.age_restriction = None
+            self.base_cost_multiplier = 1.0
+            self.session_time_limit = None
+            self.daily_usage_limit = None
+            self.ad_supported = False
+            self.premium_features = []
+    
+    class MockPersonaManager:
+        def __init__(self, supabase_client):
+            self.presets = {
+                "mindbot": MockPersonaConfig(
+                    "mindbot", 
+                    "MindBot", 
+                    "General assistant",
+                    "You are MindBot, a helpful AI assistant."
+                ),
+                "blaze": MockPersonaConfig(
+                    "blaze", 
+                    "Blaze", 
+                    "Cannabis guru",
+                    "You are Blaze, a laid-back cannabis guru."
+                ),
+                "sizzle": MockPersonaConfig(
+                    "sizzle", 
+                    "SizzleBot", 
+                    "DJ hype-man",
+                    "You are SizzleBot, an energetic DJ hype-man."
+                )
+            }
+        
+        async def get_persona_by_slug(self, slug):
+            return self.presets.get(slug)
+    
+    PersonaManager = MockPersonaManager
 
 logger = logging.getLogger("mindbot.persona-agent")
 
@@ -239,6 +307,97 @@ class PersonaVoiceAgent(Agent):
         info += "What would you like to explore together?"
         
         return info
+    
+    @function_tool
+    async def list_pricing_tiers(self, context: RunContext) -> str:
+        """List available time card pricing tiers"""
+        try:
+            # In production, get from database
+            tiers = [
+                {"name": "Starter Pack", "hours": 1, "price": "$9.99", "bonus": "0 min"},
+                {"name": "Basic Pack", "hours": 5, "price": "$44.99", "bonus": "30 min"},
+                {"name": "Premium Pack", "hours": 10, "price": "$79.99", "bonus": "2 hours"},
+                {"name": "Pro Pack", "hours": 25, "price": "$179.99", "bonus": "5 hours"},
+                {"name": "Enterprise Pack", "hours": 50, "price": "$299.99", "bonus": "10 hours"}
+            ]
+            
+            response = "Here are our current time card packages:\n\n"
+            
+            for tier in tiers:
+                response += f"• {tier['name']} - {tier['price']}\n"
+                response += f"  {tier['hours']} hours"
+                
+                if tier['bonus'] != "0 min":
+                    response += f" + {tier['bonus']} bonus time"
+                
+                response += "\n"
+            
+            response += "\nAll time cards are valid for one year from activation. You can purchase them through our website or mobile app."
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error listing pricing tiers: {e}")
+            return "I'm having trouble retrieving our pricing information right now. Please check our website for current packages and pricing."
+    
+    @function_tool
+    async def estimate_session_cost(self, context: RunContext) -> str:
+        """Estimate the cost of the current session"""
+        try:
+            if not self.session_start_time:
+                self.session_start_time = datetime.utcnow().timestamp()
+            
+            elapsed_seconds = datetime.utcnow().timestamp() - self.session_start_time
+            elapsed_minutes = max(1, round(elapsed_seconds / 60))
+            
+            if not self.user_context.get("is_authenticated"):
+                return f"This guest session has been running for about {elapsed_minutes} minute{'s' if elapsed_minutes != 1 else ''}. Time isn't deducted for guest sessions, but creating an account gives you access to time tracking and premium features."
+            
+            # Get cost multiplier based on persona
+            cost_multiplier = 1.0
+            if self.persona:
+                cost_multiplier = getattr(self.persona, "base_cost_multiplier", 1.0)
+            
+            # Calculate cost
+            cost_minutes = round(elapsed_minutes * cost_multiplier)
+            
+            # Get balance
+            balance = self.user_context.get("time_balance", {"total_minutes": 0})
+            remaining_minutes = balance.get("total_minutes", 0)
+            
+            # Calculate remaining time after this session
+            remaining_after = max(0, remaining_minutes - cost_minutes)
+            
+            response = f"This session has been running for {elapsed_minutes} minute{'s' if elapsed_minutes != 1 else ''}, "
+            
+            if cost_multiplier != 1.0:
+                response += f"with a cost multiplier of {cost_multiplier}x for this persona, "
+            
+            response += f"which will use approximately {cost_minutes} minute{'s' if cost_minutes != 1 else ''} from your balance."
+            
+            if remaining_after > 0:
+                response += f" You'll have about {remaining_after} minutes remaining after this session."
+            else:
+                response += " This session will use up your remaining time balance. Consider purchasing more time cards to continue our conversations."
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error estimating session cost: {e}")
+            return "I'm having trouble calculating your session cost right now."
+
+# Enhanced prewarm function
+def prewarm(proc: JobProcess):
+    """Preload components to speed up session start"""
+    try:
+        # Preload VAD model
+        proc.userdata["vad"] = silero.VAD.load()
+        
+        # Preload other models if needed
+        logger.info("Prewarming completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error during prewarm: {e}")
 
 # Enhanced entrypoint that accepts persona parameter
 async def persona_entrypoint(ctx: JobContext, persona_slug: str = "mindbot"):
@@ -246,8 +405,32 @@ async def persona_entrypoint(ctx: JobContext, persona_slug: str = "mindbot"):
     Entrypoint for persona-specific voice agent
     """
     try:
+        # Add context fields to logs
+        ctx.log_context_fields = {
+            "room": ctx.room.name,
+            "persona": persona_slug
+        }
+        
+        logger.info(f"Starting persona session: {persona_slug} in room: {ctx.room.name}")
+        
         # Connect to LiveKit room
         await ctx.connect()
+        
+        # Get voice configuration for persona
+        voice = "alloy"  # Default voice
+        try:
+            # In production, get from persona config
+            persona_voices = {
+                "blaze": "onyx",
+                "sizzle": "echo",
+                "neon": "nova",
+                "pixel": "shimmer",
+                "professor_oak": "onyx",
+                "zen_master": "alloy"
+            }
+            voice = persona_voices.get(persona_slug, "alloy")
+        except Exception as e:
+            logger.warning(f"Error getting voice for persona {persona_slug}: {e}")
         
         # Create agent session with persona
         session = AgentSession(
@@ -261,10 +444,36 @@ async def persona_entrypoint(ctx: JobContext, persona_slug: str = "mindbot"):
                 model="gpt-4.1-mini", 
                 temperature=0.7
             ),
-            tts=openai.TTS(voice="alloy"),  # Default voice, persona can override
-            vad=silero.VAD.load(),
+            tts=openai.TTS(voice=voice),
+            vad=ctx.proc.userdata.get("vad") or silero.VAD.load(),
             turn_detection=MultilingualModel(),
         )
+        
+        # Set up metrics collection
+        usage_collector = session.metrics.UsageCollector()
+        
+        @session.on("metrics_collected")
+        def _on_metrics_collected(ev: MetricsCollectedEvent):
+            session.metrics.log_metrics(ev.metrics)
+            usage_collector.collect(ev.metrics)
+        
+        @session.on("user_speech_committed")
+        def _on_user_speech(msg):
+            logger.debug(f"User said: {msg.transcript}")
+        
+        @session.on("agent_speech_committed")
+        def _on_agent_speech(msg):
+            logger.debug(f"Agent said: {msg.transcript}")
+        
+        # Log usage summary on shutdown
+        async def log_usage():
+            try:
+                summary = usage_collector.get_summary()
+                logger.info(f"Session usage summary: {summary}")
+            except Exception as e:
+                logger.error(f"Error logging usage: {e}")
+        
+        ctx.add_shutdown_callback(log_usage)
         
         # Create persona agent
         agent = PersonaVoiceAgent(persona_slug)
@@ -275,7 +484,7 @@ async def persona_entrypoint(ctx: JobContext, persona_slug: str = "mindbot"):
             agent=agent,
         )
         
-        logger.info(f"Started persona session: {persona_slug}")
+        logger.info(f"Persona session started successfully: {persona_slug}")
         
     except Exception as e:
         logger.error(f"Error in persona entrypoint: {e}")
