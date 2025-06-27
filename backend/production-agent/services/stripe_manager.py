@@ -1,41 +1,32 @@
-"""
-Stripe payment manager for MindBot time card purchases
-Handles payment intents, webhooks, and subscription management
-"""
+# services/stripe_manager.py
 
 import logging
 from typing import Dict, Any, Optional
-import json
 import stripe
 from datetime import datetime
 
-from supabase_client import supabase_client, PricingTier
-from core.settings import AgentConfig, get_config
+from .supabase_client import SupabaseClient
+from ..core.settings import AgentConfig
 
 logger = logging.getLogger("mindbot.stripe")
 
-
 class StripeManager:
-    """Enhanced Stripe payment manager with time card integration"""
+    """
+    Manages all Stripe-related operations, including payments, customers, and webhooks.
+    """
     
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, supabase_client: SupabaseClient):
         self.config = config
+        self.supabase_client = supabase_client
         self.stripe_secret_key = config.stripe_secret_key
         self.webhook_secret = config.stripe_webhook_secret
         
-        if not self.stripe_secret_key:
-            raise ValueError("STRIPE_SECRET_KEY is required in configuration")
+        if not self.stripe_secret_key or not self.webhook_secret:
+            raise ValueError("Stripe secret key and webhook secret are required.")
         
         stripe.api_key = self.stripe_secret_key
-        
-        # Validate key type for environment
-        if self.config.environment == "production" and not self.stripe_secret_key.startswith("sk_live_"):
-            logger.warning("Using test Stripe key in production environment")
-        elif self.config.environment != "production" and not self.stripe_secret_key.startswith("sk_test_"):
-            logger.warning("Using live Stripe key in non-production environment")
-        
-        logger.info("Stripe manager initialized successfully")
-    
+        logger.info("Stripe manager initialized successfully.")
+
     async def create_payment_intent(
         self, 
         user_id: str, 
@@ -44,329 +35,118 @@ class StripeManager:
         save_payment_method: bool = False
     ) -> Dict[str, Any]:
         """
-        Create Stripe payment intent for time card purchase
-        
-        Args:
-            user_id: MindBot user ID
-            package_id: Pricing tier ID
-            user_email: User's email for customer creation
-            save_payment_method: Whether to save payment method for future use
-            
-        Returns:
-            Dictionary with payment intent details
+        Creates a Stripe Payment Intent for a time card purchase.
+        It also creates a 'pending' time card in Supabase that will be activated upon successful payment.
         """
         try:
-            # Get pricing tier
-            tiers = await supabase_client.get_pricing_tiers()
+            tiers = await self.supabase_client.get_pricing_tiers()
             tier = next((t for t in tiers if t.id == package_id), None)
-            
             if not tier:
-                raise ValueError(f"Pricing tier {package_id} not found")
-            
-            # Get or create Stripe customer
+                raise ValueError(f"Pricing tier '{package_id}' not found or is not active.")
+
             customer_id = await self._get_or_create_customer(user_id, user_email)
             
-            # Calculate total minutes
-            total_minutes = (tier.hours * 60) + tier.bonus_minutes
-            
-            # Create payment intent
-            payment_intent_params = {
-                'amount': tier.price_cents,
-                'currency': 'usd',
-                'customer': customer_id,
-                'metadata': {
+            payment_intent = stripe.PaymentIntent.create(
+                amount=tier.price_cents,
+                currency='usd',
+                customer=customer_id,
+                metadata={
                     'user_id': user_id,
-                    'user_email': user_email,
                     'package_id': package_id,
-                    'package_name': tier.name,
-                    'hours': str(tier.hours),
-                    'bonus_minutes': str(tier.bonus_minutes),
-                    'total_minutes': str(total_minutes),
-                    'mindbot_service': 'time_card_purchase'
+                    'service': 'mindbot_time_card'
                 },
-                'description': f"MindBot {tier.name} - {tier.hours} hours of AI conversation time",
-                'receipt_email': user_email
-            }
-            
-            # Add setup for future payments if requested
-            if save_payment_method:
-                payment_intent_params['setup_future_usage'] = 'on_session'
-            
-            payment_intent = stripe.PaymentIntent.create(**payment_intent_params)
-            
-            # Create pending time card in database
-            time_card = await supabase_client.create_time_card(
+                description=f"MindBot Time Card: {tier.name}",
+                receipt_email=user_email,
+                setup_future_usage='on_session' if save_payment_method else None
+            )
+
+            time_card = await self.supabase_client.create_time_card(
                 user_id=user_id,
                 package_id=package_id,
                 stripe_payment_intent_id=payment_intent.id
             )
-            
             if not time_card:
-                # Cancel payment intent if card creation failed
                 stripe.PaymentIntent.cancel(payment_intent.id)
-                raise Exception("Failed to create time card record")
-            
-            logger.info(f"Created payment intent {payment_intent.id} for user {user_id}, package {package_id}")
-            
+                raise Exception("Failed to create a pending time card record in the database.")
+
+            logger.info(f"Created PaymentIntent {payment_intent.id} for user {user_id}.")
             return {
                 'payment_intent_id': payment_intent.id,
                 'client_secret': payment_intent.client_secret,
-                'amount': payment_intent.amount,
-                'currency': payment_intent.currency,
-                'customer_id': customer_id,
-                'time_card': {
-                    'id': time_card.id,
-                    'activation_code': time_card.activation_code,
-                    'total_minutes': time_card.total_minutes,
-                    'expires_at': time_card.expires_at.isoformat() if time_card.expires_at else None
-                },
-                'package': {
-                    'id': tier.id,
-                    'name': tier.name,
-                    'hours': tier.hours,
-                    'bonus_minutes': tier.bonus_minutes,
-                    'description': tier.description
-                }
+                'time_card_id': time_card.id
             }
-            
         except stripe.error.StripeError as e:
-            logger.error(f"Stripe error creating payment intent: {e}")
-            raise Exception(f"Payment processing error: {str(e)}")
+            logger.error(f"Stripe API error during payment intent creation: {e}", exc_info=True)
+            raise Exception("A payment processing error occurred with our provider.")
         except Exception as e:
-            logger.error(f"Error creating payment intent: {e}")
+            logger.error(f"Failed to create payment intent for user {user_id}: {e}", exc_info=True)
             raise
-    
+
     async def _get_or_create_customer(self, user_id: str, email: str) -> str:
-        """Get existing Stripe customer or create new one"""
+        """Retrieves an existing Stripe customer by email or creates a new one."""
         try:
-            # Search for existing customer by email
             customers = stripe.Customer.list(email=email, limit=1)
-            
             if customers.data:
                 customer = customers.data[0]
-                
-                # Update metadata with user_id if missing
                 if customer.metadata.get('mindbot_user_id') != user_id:
-                    stripe.Customer.modify(
-                        customer.id,
-                        metadata={'mindbot_user_id': user_id}
-                    )
-                
+                    stripe.Customer.modify(customer.id, metadata={'mindbot_user_id': user_id})
                 return customer.id
             
-            # Create new customer
             customer = stripe.Customer.create(
                 email=email,
-                metadata={
-                    'mindbot_user_id': user_id,
-                    'service': 'mindbot_voice_ai'
-                },
-                description=f"MindBot user - {email}"
+                metadata={'mindbot_user_id': user_id},
+                description=f"MindBot User: {email}"
             )
-            
-            logger.info(f"Created Stripe customer {customer.id} for user {user_id}")
+            logger.info(f"Created new Stripe customer {customer.id} for user {user_id}.")
             return customer.id
-            
         except stripe.error.StripeError as e:
-            logger.error(f"Stripe error managing customer: {e}")
-            raise Exception(f"Customer management error: {str(e)}")
-    
-    async def handle_webhook(self, payload: bytes, sig_header: str) -> Dict[str, Any]:
+            logger.error(f"Stripe API error managing customer for user {user_id}: {e}", exc_info=True)
+            raise Exception("Could not manage customer information with our payment provider.")
+
+    async def handle_webhook(self, payload: bytes, sig_header: str):
         """
-        Handle Stripe webhook events
-        
-        Args:
-            payload: Raw webhook payload
-            sig_header: Stripe signature header
-            
-        Returns:
-            Dictionary with processing results
+        Validates and processes incoming Stripe webhooks.
+        Delegates to specific handler methods based on the event type.
         """
         try:
-            # Verify webhook signature
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, self.webhook_secret
-            )
-            
-            event_type = event['type']
-            event_data = event['data']['object']
-            
-            logger.info(f"Processing Stripe webhook: {event_type}")
-            
-            result = {'event_type': event_type, 'processed': False, 'error': None}
-            
-            if event_type == 'payment_intent.succeeded':
-                result = await self._handle_payment_success(event_data)
-            elif event_type == 'payment_intent.payment_failed':
-                result = await self._handle_payment_failed(event_data)
-            elif event_type == 'customer.subscription.created':
-                result = await self._handle_subscription_created(event_data)
-            elif event_type == 'customer.subscription.deleted':
-                result = await self._handle_subscription_cancelled(event_data)
-            else:
-                logger.info(f"Unhandled webhook event type: {event_type}")
-                result['processed'] = True
-            
-            return result
-            
-        except stripe.error.SignatureVerificationError:
-            logger.error("Invalid webhook signature")
-            raise Exception("Invalid webhook signature")
-        except Exception as e:
-            logger.error(f"Error processing webhook: {e}")
-            raise
-    
-    async def _handle_payment_success(self, payment_intent: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle successful payment"""
-        try:
-            payment_intent_id = payment_intent['id']
-            user_id = payment_intent['metadata'].get('user_id')
-            amount_cents = payment_intent['amount']
-            
-            if not user_id:
-                logger.error(f"No user_id in payment intent {payment_intent_id}")
-                return {'processed': False, 'error': 'Missing user_id'}
-            
-            # Activate time card
-            activated = await supabase_client.activate_time_card(payment_intent_id)
-            
-            if not activated:
-                logger.error(f"Failed to activate time card for payment {payment_intent_id}")
-                return {'processed': False, 'error': 'Time card activation failed'}
-            
-            # Record payment in history
-            await supabase_client.record_payment(
-                user_id=user_id,
-                stripe_payment_intent_id=payment_intent_id,
-                amount_cents=amount_cents,
+            event = stripe.Webhook.construct_event(payload, sig_header, self.webhook_secret)
+        except (ValueError, stripe.error.SignatureVerificationError) as e:
+            logger.warning(f"Invalid Stripe webhook signature received: {e}")
+            raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+
+        logger.info(f"Processing Stripe webhook event: {event.type}")
+        handler = getattr(self, f"_handle_{event.type.replace('.', '_')}", self._handle_unhandled_event)
+        await handler(event.data.object)
+
+    async def _handle_payment_intent_succeeded(self, payment_intent: Dict[str, Any]):
+        """Handles the 'payment_intent.succeeded' event."""
+        pi_id = payment_intent['id']
+        logger.info(f"Payment succeeded for intent: {pi_id}")
+        if await self.supabase_client.activate_time_card(pi_id):
+            await self.supabase_client.record_payment(
+                user_id=payment_intent['metadata']['user_id'],
+                stripe_payment_intent_id=pi_id,
+                amount_cents=payment_intent['amount'],
                 status='succeeded'
             )
-            
-            logger.info(f"Successfully processed payment {payment_intent_id} for user {user_id}")
-            
-            # TODO: Send confirmation email/notification
-            await self._send_purchase_confirmation(user_id, payment_intent)
-            
-            return {'processed': True, 'payment_intent_id': payment_intent_id}
-            
-        except Exception as e:
-            logger.error(f"Error handling payment success: {e}")
-            return {'processed': False, 'error': str(e)}
-    
-    async def _handle_payment_failed(self, payment_intent: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle failed payment"""
-        try:
-            payment_intent_id = payment_intent['id']
-            user_id = payment_intent['metadata'].get('user_id')
-            
-            if user_id:
-                # Record failed payment
-                await supabase_client.record_payment(
-                    user_id=user_id,
-                    stripe_payment_intent_id=payment_intent_id,
-                    amount_cents=payment_intent['amount'],
-                    status='failed'
-                )
-                
-                # TODO: Send failure notification
-                await self._send_payment_failure_notification(user_id, payment_intent)
-            
-            logger.warning(f"Payment failed for {payment_intent_id}")
-            return {'processed': True, 'payment_intent_id': payment_intent_id}
-            
-        except Exception as e:
-            logger.error(f"Error handling payment failure: {e}")
-            return {'processed': False, 'error': str(e)}
-    
-    async def _handle_subscription_created(self, subscription: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle subscription creation (for future subscription features)"""
-        try:
-            customer_id = subscription['customer']
-            subscription_id = subscription['id']
-            
-            # Get customer metadata to find user_id
-            customer = stripe.Customer.retrieve(customer_id)
-            user_id = customer.metadata.get('mindbot_user_id')
-            
-            if user_id:
-                logger.info(f"Subscription {subscription_id} created for user {user_id}")
-                # TODO: Handle subscription creation in database
-            
-            return {'processed': True, 'subscription_id': subscription_id}
-            
-        except Exception as e:
-            logger.error(f"Error handling subscription creation: {e}")
-            return {'processed': False, 'error': str(e)}
-    
-    async def _handle_subscription_cancelled(self, subscription: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle subscription cancellation"""
-        try:
-            subscription_id = subscription['id']
-            logger.info(f"Subscription {subscription_id} cancelled")
-            # TODO: Handle subscription cancellation in database
-            
-            return {'processed': True, 'subscription_id': subscription_id}
-            
-        except Exception as e:
-            logger.error(f"Error handling subscription cancellation: {e}")
-            return {'processed': False, 'error': str(e)}
-    
-    async def _send_purchase_confirmation(self, user_id: str, payment_intent: Dict[str, Any]):
-        """Send purchase confirmation (placeholder for email/notification service)"""
-        try:
-            package_name = payment_intent['metadata'].get('package_name', 'Time Card')
-            amount = payment_intent['amount'] / 100
-            
-            logger.info(f"Purchase confirmation: User {user_id} bought {package_name} for ${amount:.2f}")
-            
-            # TODO: Integrate with email service (SendGrid, AWS SES, etc.)
-            # TODO: Send in-app notification
-            
-        except Exception as e:
-            logger.error(f"Error sending purchase confirmation: {e}")
-    
-    async def _send_payment_failure_notification(self, user_id: str, payment_intent: Dict[str, Any]):
-        """Send payment failure notification"""
-        try:
-            logger.info(f"Payment failure notification for user {user_id}")
-            
-            # TODO: Send failure notification email
-            # TODO: Log for customer support follow-up
-            
-        except Exception as e:
-            logger.error(f"Error sending payment failure notification: {e}")
-    
-    async def create_refund(self, payment_intent_id: str, amount_cents: Optional[int] = None, reason: str = "requested_by_customer") -> Dict[str, Any]:
-        """Create a refund for a payment"""
-        try:
-            refund_params = {
-                'payment_intent': payment_intent_id,
-                'reason': reason,
-                'metadata': {
-                    'refund_timestamp': datetime.utcnow().isoformat(),
-                    'service': 'mindbot'
-                }
-            }
-            
-            if amount_cents:
-                refund_params['amount'] = amount_cents
-            
-            refund = stripe.Refund.create(**refund_params)
-            
-            logger.info(f"Created refund {refund.id} for payment {payment_intent_id}")
-            
-            # TODO: Update time card status to refunded
-            # TODO: Remove time from user's balance if already used
-            
-            return {
-                'refund_id': refund.id,
-                'amount': refund.amount,
-                'status': refund.status,
-                'payment_intent_id': payment_intent_id
-            }
-            
-        except stripe.error.StripeError as e:
-            logger.error(f"Stripe error creating refund: {e}")
-            raise Exception(f"Refund error: {str(e)}")
+            # Here you could trigger a confirmation email
+        else:
+            logger.error(f"Could not find a pending time card to activate for payment intent {pi_id}.")
+
+    async def _handle_payment_intent_payment_failed(self, payment_intent: Dict[str, Any]):
+        """Handles the 'payment_intent.payment_failed' event."""
+        pi_id = payment_intent['id']
+        logger.warning(f"Payment failed for intent: {pi_id}. Reason: {payment_intent.get('last_payment_error', {}).get('message')}")
+        await self.supabase_client.record_payment(
+            user_id=payment_intent['metadata']['user_id'],
+            stripe_payment_intent_id=pi_id,
+            amount_cents=payment_intent['amount'],
+            status='failed'
+        )
+        # Here you could trigger a notification to the user
+
+    async def _handle_unhandled_event(self, event_data: Dict[str, Any]):
+        """Handles all other webhook events."""
+        logger.debug(f"Received an unhandled event type.")
 
 
